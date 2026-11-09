@@ -215,13 +215,26 @@ async def test_cancelled_running_job_still_blocks_switch_until_worker_finishes(b
 async def test_whole_request_remains_pinned_between_worker_jobs(backend):
     await backend.system_select_instance("pid:10")
     with backend.instance_request_scope():
-        with backend.instance_request_scope():
+        backend._instance_pending_requests += 1  # an independent in-flight request
+        try:
             with pytest.raises(it.InstanceTargetError):
                 await backend.system_select_instance("pid:20")
+        finally:
+            backend._instance_pending_requests -= 1
         backend._instance_generation += 1
         with pytest.raises(it.InstanceTargetError) as stale:
             await backend._run(lambda: cb._acad_app().tag)
         assert stale.value.kind == "cad_target_changed"
+
+
+@pytest.mark.asyncio
+async def test_search_proxy_reentry_reuses_the_request_pin(backend):
+    with backend.instance_request_scope():
+        with backend.instance_request_scope():
+            assert backend._instance_pending_requests == 1
+            result = await backend.system_select_instance("pid:20")
+            assert result["identity"]["pid"] == 20
+    assert backend._instance_pending_requests == 0
 
 
 @pytest.mark.asyncio

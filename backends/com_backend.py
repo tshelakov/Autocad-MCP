@@ -4028,6 +4028,12 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
     @contextlib.contextmanager
     def instance_request_scope(self):
         """Pin the whole MCP request, including calls made between two STA jobs."""
+        current = REQUEST_INSTANCE.get()
+        if current is not None and current[0] == id(self):
+            # search mode's call_tool re-enters middleware for the same request.
+            # It must not look like another client or replace the original pin.
+            yield
+            return
         token = REQUEST_INSTANCE.set((id(self), self._instance_generation))
         self._instance_pending_requests += 1
         try:
