@@ -94,6 +94,9 @@ SETTINGS_TOOLS = {
     "ucs_set",
     "ucs_restore",
     "system_launch",
+    "system_list_instances",
+    "system_get_instance",
+    "system_select_instance",
     "system_preferences_get",
     "system_preferences_set",
     "drawing_properties_get",
@@ -209,7 +212,7 @@ def test_pack_registry_names_real_tools_and_only_them():
     assert server.PACK_TOOL_NAMES["settings"] == frozenset(SETTINGS_TOOLS)
     assert server.PACK_TOOL_NAMES["arch"] == frozenset(ARCH_TOOLS)
     assert server.PACK_TOOL_NAMES["plant"] == frozenset(PLANT_TOOLS)
-    assert len(SETTINGS_TOOLS) == 22
+    assert len(SETTINGS_TOOLS) == 25
     assert len(MECH_TOOLS) == 15  # + mech_part_revise (1.8-19)
     assert len(ARCH_TOOLS) == 12
     assert len(PLANT_TOOLS) == 2

@@ -60,6 +60,15 @@ from .contracts.entity_modification import TEXT_SEARCH_SCOPE
 from .contracts.settings import SUMMARY_FIELDS, validate_drawing_properties
 from .document_guard import ActiveDocumentChangedError
 from .dxf_recover import recover_dxf, recovered_source_refusal
+from .instance_target import (
+    REQUEST_INSTANCE,
+    InstanceTargetError,
+    ThreadLocalState,
+    discover_instances,
+    parse_target,
+    select_candidate,
+    validate_identity,
+)
 from .operations import CURRENT_OPERATION
 from .quarantine import DaemonExecutor, real_call_name
 from .region_render import (
@@ -251,7 +260,7 @@ except ImportError:
 # COM thread-state (accessed ONLY from the COM executor thread)
 # ---------------------------------------------------------------------------
 
-_COM_STATE: dict[str, Any] = {}  # keys: "app", "app_identity"
+_COM_STATE = ThreadLocalState()  # COM proxies belong to exactly one STA worker
 
 #: Per-thread state of the executor job running now (B11): ``guard`` is the
 #: ``_JobGuard`` that ``_acad_doc()`` consults. Thread-local, not in
@@ -267,10 +276,16 @@ class _JobGuard:
     COM thread when the job ends (a COM proxy must not be released elsewhere).
     """
 
-    __slots__ = ("backend", "doc", "touched", "space")
+    __slots__ = ("backend", "doc", "touched", "space", "generation")
 
     def __init__(self, backend):
         self.backend = backend
+        pinned = REQUEST_INSTANCE.get()
+        self.generation = (
+            pinned[1]
+            if pinned is not None and pinned[0] == id(backend)
+            else getattr(backend, "_instance_generation", 0)
+        )
         self.doc = None
         #: Set by ``_acad_app()``: the job has held the Application proxy, so
         #: it may have written something (1.8-02, ``application_busy``).
@@ -429,6 +444,11 @@ def _acad_app():
     guard = getattr(_JOB_STATE, "guard", None)
     if guard is not None:
         guard.touched = True
+        backend = guard.backend
+        if backend is not None:
+            backend._check_target_generation(guard.generation)
+            if backend._instance_selector is not None:
+                return backend._target_app_sync()
     if "app" not in _COM_STATE:
         progid = config.settings.cad_progid
         try:
@@ -540,6 +560,7 @@ def _make_launched_visible(app, progid: str) -> None:
 
 def _drop_app() -> None:
     """Forget the cached Application proxy (and the identity read from it)."""
+    _COM_STATE.pop("target_app", None)
     _COM_STATE.pop("app", None)
     _COM_STATE.pop("app_identity", None)
     _COM_STATE.pop("vl", None)
@@ -575,6 +596,10 @@ def _app_identity(app) -> tuple:
             except Exception as exc:  # noqa: BLE001 - the HWND alone still tells two apart
                 log.debug("GetWindowThreadProcessId(%s) failed: %s", hwnd, exc)
         identity = ("hwnd", hwnd, pid)
+        guard = getattr(_JOB_STATE, "guard", None)
+        selected = getattr(getattr(guard, "backend", None), "_instance_identity", None)
+        if selected is not None:
+            identity = (*identity, selected.started_at_utc)
     _COM_STATE["app_identity"] = (app, identity)
     return identity
 
@@ -3238,7 +3263,7 @@ def _mutating(method):
         refused = False
         try:
             return await method(self, *args, **kwargs)
-        except (ActiveDocumentChangedError, ApplicationBusyError):
+        except (ActiveDocumentChangedError, ApplicationBusyError, InstanceTargetError):
             # Both are raised inside the job before it wrote anything (1.8-02
             # adds the busy seat): the revision stays.
             refused = True
@@ -3268,6 +3293,11 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
 
     def __init__(self):
         self._executor: concurrent.futures.Executor | None = None
+        self._instance_selector = None
+        self._instance_identity = None
+        self._instance_generation = 0
+        self._instance_pending_jobs = 0
+        self._instance_pending_requests = 0
         # B01: cancellations recorded by `_run`, newest last; Task 10 reads it.
         self.call_outcomes: collections.deque = collections.deque(maxlen=self._MAX_CALL_OUTCOMES)
         # 1.8-14: every job's queue/guard/work/refresh/counter ms (run_metrics).
@@ -3447,6 +3477,7 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
                     if config.settings.cad_launch == "auto"
                     else "cad_launch_never:attaches_only_never_starts_the_application",
                 ),
+                "instance_targeting": FeatureCapability(True, "rot"),
                 "preferences": FeatureCapability(True, "native", reason="whitelisted_keys_only"),
                 "interactive_prompt": FeatureCapability(
                     True, "native", reason="cancel_returns_cancelled_true;timeout_returns_timed_out"
@@ -3469,6 +3500,7 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
     async def connect(self) -> None:
         if not _COM_IMPORTS_OK:
             raise RuntimeError("pywin32 not available. Install with: pip install pywin32")
+        self._instance_selector = parse_target(config.settings.cad_target)
         # Lazy connection: just set up the executor. AutoCAD is connected
         # on the first actual tool call so the server starts even if AutoCAD
         # is not open yet — it will be found as soon as the user opens it.
@@ -3523,6 +3555,9 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
         self._document_scope_key = None
         self._bound = None
         self._known_documents.clear()
+        self._instance_selector = None
+        self._instance_identity = None
+        self._instance_generation += 1
         self._retire_snapshot()
         self._transaction_active = False
         self._reset_document_state()
@@ -3982,6 +4017,134 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
         app = _acad_app()
         _ = app.Version  # raises if disconnected
 
+    def _check_target_generation(self, generation: int) -> None:
+        if generation != self._instance_generation:
+            raise InstanceTargetError(
+                "cad_target_changed",
+                "The AutoCAD target changed after this call was queued; nothing was sent. "
+                "Inspect system_get_instance before sending a new request.",
+            )
+
+    @contextlib.contextmanager
+    def instance_request_scope(self):
+        """Pin the whole MCP request, including calls made between two STA jobs."""
+        token = REQUEST_INSTANCE.set((id(self), self._instance_generation))
+        self._instance_pending_requests += 1
+        try:
+            yield
+        finally:
+            self._instance_pending_requests -= 1
+            REQUEST_INSTANCE.reset(token)
+
+    def _target_app_sync(self):
+        """Acquire/reacquire exactly the selected process on this job's STA."""
+        selector = self._instance_selector
+        identity = self._instance_identity
+        if identity is not None:
+            validate_identity(identity)
+        key = (id(self), self._instance_generation)
+        cached = _COM_STATE.get("target_app")
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        candidate = select_candidate(discover_instances(config.settings.cad_progid), selector)
+        if identity is not None and candidate.identity != identity:
+            raise InstanceTargetError(
+                "cad_target_lost",
+                "The selected AutoCAD process was replaced. Explicitly select a current "
+                "instance; nothing was launched or sent.",
+                selected=identity.to_dict(),
+                observed=candidate.identity.to_dict(),
+            )
+        self._instance_identity = candidate.identity
+        _COM_STATE["target_app"] = (key, candidate.app)
+        return candidate.app
+
+    async def system_list_instances(self) -> dict:
+        def _sync():
+            candidates = discover_instances(config.settings.cad_progid)
+            return {
+                "instances": [candidate.to_dict() for candidate in candidates],
+                "scope": "reachable_rot_applications_and_documents",
+                "cad_progid": config.settings.cad_progid,
+                "complete": False,
+                "limitation": "Busy instances or instances without a ROT application/document "
+                "registration may be unavailable. Discovery never opens a file or launches CAD.",
+            }
+
+        return await self._run(_sync)
+
+    async def system_get_instance(self) -> dict:
+        def _sync():
+            identity = self._instance_identity
+            if identity is not None:
+                validate_identity(identity)
+            return {
+                "mode": "explicit" if self._instance_selector is not None else "legacy",
+                "target": None if self._instance_selector is None else self._instance_selector.text,
+                "identity": None if identity is None else identity.to_dict(),
+                "generation": self._instance_generation,
+            }
+
+        return await self._run(_sync)
+
+    async def system_select_instance(
+        self, target: str, expected_started_at_utc: str | None = None
+    ) -> dict:
+        selector = parse_target(target)
+        if selector is None:
+            raise ValueError("system_select_instance requires an explicit pid:/hwnd: target.")
+        if (
+            self._instance_pending_jobs
+            or self._transaction_active
+            or self._instance_pending_requests > 1
+        ):
+            raise InstanceTargetError(
+                "cad_target_busy",
+                "A COM job or transaction is still active; finish it before selecting another "
+                "AutoCAD instance. Nothing was switched.",
+            )
+
+        def _sync():
+            if self._transaction_active:
+                raise InstanceTargetError(
+                    "cad_target_busy", "An AutoCAD transaction is active; finish it first."
+                )
+            candidate = select_candidate(
+                discover_instances(config.settings.cad_progid), selector, expected_started_at_utc
+            )
+            # Verify the chosen proxy before replacing a working connection.
+            validate_identity(candidate.identity)
+            _ = candidate.app.Version
+            previous = self._instance_identity
+            changed = previous != candidate.identity
+            _drop_app()
+            self._instance_selector = selector
+            self._instance_identity = candidate.identity
+            self._instance_generation += 1
+            key = (id(self), self._instance_generation)
+            _COM_STATE["target_app"] = (key, candidate.app)
+            if changed:
+                self._bound = None
+                self._document_scope_key = None
+                self._reset_document_state()
+                self._edit_counter = {
+                    "counted": None,
+                    "method": "lisp_database_reactor",
+                    "reason": "no call has touched this instance's document yet",
+                }
+                self._retire_snapshot()
+            return {
+                "ok": True,
+                "target": selector.text,
+                "identity": candidate.identity.to_dict(),
+                "previous": None if previous is None else previous.to_dict(),
+                "active_document": candidate.active_document,
+                "generation": self._instance_generation,
+                "changed": changed,
+            }
+
+        return await self._run(_sync)
+
     async def _run(self, func, *args, **kwargs):
         """Run a callable in the COM executor thread, with a hard timeout.
 
@@ -4038,6 +4201,11 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
             guard.touched = False
             try:
                 return func(*args, **kwargs)
+            except _COM_ERROR as exc:
+                # Release a dead proxy on its owning STA, never on the event loop.
+                if exc.args and exc.args[0] in (-2147221246, -2147221005, -2147417842):
+                    _drop_app()
+                raise
             finally:
                 # Also after a failure: what a batch wrote before it is drawn.
                 _JOB_STATE.refresh = None
@@ -4056,7 +4224,26 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
                 CURRENT_OPERATION.reset(token)
                 self._record_breakdown(submitted, began, ended, ran, clock)
 
-        work = self._executor.submit(_job)
+        self._instance_pending_jobs += 1
+
+        def _tracked_job():
+            try:
+                self._check_target_generation(guard.generation)
+                return _job()
+            finally:
+                self._instance_pending_jobs -= 1
+
+        try:
+            work = self._executor.submit(_tracked_job)
+        except BaseException:
+            self._instance_pending_jobs -= 1
+            raise
+
+        def _cancelled_before_run(done):
+            if done.cancelled():
+                self._instance_pending_jobs -= 1
+
+        work.add_done_callback(_cancelled_before_run)
         _note_reached()  # B11: from here a `_mutating` call may have written
         if _MUTATION_PROBE.get() is not None:
             # Issue #20: a write is queued - no export taken before it is current.
@@ -5631,7 +5818,7 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
 
         def _sync():
             progid = config.settings.cad_progid
-            app = _COM_STATE.get("app")
+            app = _acad_app() if self._instance_selector is not None else _COM_STATE.get("app")
             launched = False
             if app is None:
                 try:
@@ -10172,6 +10359,16 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
                     "cad_progid": config.settings.cad_progid,
                     # #19: whether a missing application may be started.
                     "cad_launch": config.settings.cad_launch,
+                    "instance": {
+                        "mode": "explicit" if self._instance_selector is not None else "legacy",
+                        "target": None
+                        if self._instance_selector is None
+                        else self._instance_selector.text,
+                        "identity": None
+                        if self._instance_identity is None
+                        else self._instance_identity.to_dict(),
+                        "generation": self._instance_generation,
+                    },
                     "autocad_version": version,
                     "open_documents": doc_count,
                     "active_document": None if active_key is None else active_key[0],
@@ -10202,6 +10399,8 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
                 }
             except Exception as exc:
                 log.debug("system_status: _acad_app check failed: %s", exc)
+                if isinstance(exc, InstanceTargetError):
+                    raise
                 status = {
                     "backend": "com",
                     "connected": False,

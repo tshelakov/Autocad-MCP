@@ -115,6 +115,14 @@ class Settings:
         return parse_cad_launch(os.environ.get("CAD_LAUNCH"))
 
     @property
+    def cad_target(self) -> str:
+        """An explicit pid:/hwnd: startup binding; empty keeps legacy COM selection."""
+        from backends.instance_target import parse_target
+
+        selected = parse_target(os.environ.get("CAD_TARGET"))
+        return selected.text if selected is not None else ""
+
+    @property
     def accoreconsole_path(self) -> str:
         """``ACCORECONSOLE_PATH`` as set, stripped ("" when unset; K1, 1.8.0).
 

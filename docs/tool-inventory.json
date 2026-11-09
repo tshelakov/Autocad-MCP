@@ -3,7 +3,7 @@
   "schema_version": 2,
   "package_version": "1.8.0",
   "totals": {
-    "tools": 257,
+    "tools": 260,
     "resources": 13,
     "prompts": 5,
     "groups": 28
@@ -20,7 +20,7 @@
     "entity_creation": 18,
     "entity_modification": 17,
     "entity_query": 9,
-    "environment": 22,
+    "environment": 25,
     "layers": 16,
     "layouts": 12,
     "mechanical": 15,
@@ -5379,6 +5379,26 @@
       }
     },
     {
+      "name": "system_get_instance",
+      "group": "environment",
+      "cost": "read",
+      "summary": "Read this MCP connection's selected AutoCAD process.",
+      "acad": [],
+      "synonyms": [
+        "current autocad process",
+        "selected instance",
+        "target identity"
+      ],
+      "tags": [
+        "environment",
+        "system"
+      ],
+      "annotations": {
+        "title": "Get AutoCAD Instance",
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "system_get_variable",
       "group": "system",
       "cost": "read",
@@ -5420,6 +5440,27 @@
         "title": "Launch / Attach AutoCAD",
         "readOnlyHint": false,
         "destructiveHint": false
+      }
+    },
+    {
+      "name": "system_list_instances",
+      "group": "environment",
+      "cost": "read",
+      "summary": "List reachable AutoCAD instances with PID, HWND and start time.",
+      "acad": [],
+      "synonyms": [
+        "list autocad processes",
+        "running instances",
+        "find cad windows",
+        "process ids"
+      ],
+      "tags": [
+        "environment",
+        "system"
+      ],
+      "annotations": {
+        "title": "List AutoCAD Instances",
+        "readOnlyHint": true
       }
     },
     {
@@ -5534,6 +5575,28 @@
       "annotations": {
         "title": "Execute AutoLISP",
         "readOnlyHint": false
+      }
+    },
+    {
+      "name": "system_select_instance",
+      "group": "environment",
+      "cost": "safe",
+      "summary": "Pin this MCP connection to one running AutoCAD PID or HWND.",
+      "acad": [],
+      "synonyms": [
+        "switch autocad process",
+        "select instance",
+        "connect by pid",
+        "parallel projects"
+      ],
+      "tags": [
+        "environment",
+        "system"
+      ],
+      "annotations": {
+        "title": "Select AutoCAD Instance",
+        "readOnlyHint": false,
+        "destructiveHint": false
       }
     },
     {

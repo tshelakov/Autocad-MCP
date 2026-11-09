@@ -29,6 +29,8 @@ pytestmark = pytest.mark.asyncio
 #: settings, process status, parsers, and the two interactive picks the
 #: headless engine refuses by capability. Each is a reason, not a convenience.
 NO_DOCUMENT_READ = {
+    "system_get_instance": "live process binding; headless refuses instance_targeting",
+    "system_list_instances": "live ROT discovery; headless refuses instance_targeting",
     "system_status": "process state, answered without the lock on purpose",
     "drawing_history": "the durable journal (detail='row'); only detail='changes' reads a drawing",
     "system_capabilities": "the engine's capability map",

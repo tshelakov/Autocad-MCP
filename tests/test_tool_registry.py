@@ -649,7 +649,7 @@ async def test_tool_group_sizes_are_unchanged():
         "entity_creation": 18,
         "entity_modification": 17,  # + entity_modify_where (1.8-12)
         "entity_query": 9,
-        "environment": 22,
+        "environment": 25,
         "layers": 16,  # + layer_rename, layer_merge (1.8-12)
         "layouts": 12,
         "mechanical": 15,  # + mech_part_revise (1.8-19)
@@ -667,4 +667,4 @@ async def test_tool_group_sizes_are_unchanged():
         "validation": 1,
         "view": 4,
     }
-    assert sum(sizes.values()) == 257
+    assert sum(sizes.values()) == 260

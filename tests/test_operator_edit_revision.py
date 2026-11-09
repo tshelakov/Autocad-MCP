@@ -206,7 +206,7 @@ async def test_a_reopened_file_never_calls_into_the_closed_namespace(com, seat):
 async def test_without_a_document_window_nothing_is_cached(com, seat):
     await com.system_get_variable("LTSCALE")
     await com.system_get_variable("LTSCALE")
-    assert cb._COM_STATE.get("vl_docs") == {}
+    assert await com._run(lambda: cb._COM_STATE.get("vl_docs")) == {}
 
 
 @pytest.mark.asyncio

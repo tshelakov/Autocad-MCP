@@ -2133,6 +2133,9 @@ class EzdxfBackend(EzdxfCheckpoints, EzdxfChangeSets, AutoCADBackend):
                 "live_application": FeatureCapability(
                     False, reason="headless_engine_has_no_application_to_launch_or_attach"
                 ),
+                "instance_targeting": FeatureCapability(
+                    False, reason="headless_engine_has_no_running_application"
+                ),
                 "preferences": FeatureCapability(
                     False, reason="preferences_live_in_the_running_application_not_in_a_file"
                 ),

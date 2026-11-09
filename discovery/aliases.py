@@ -2079,6 +2079,20 @@ TOOL_ALIASES: dict[str, ToolAliases] = {
             "open autocad with this file",
         ),
     ),
+    "system_list_instances": ToolAliases(
+        synonyms=("list autocad processes", "running instances", "find cad windows", "process ids"),
+    ),
+    "system_get_instance": ToolAliases(
+        synonyms=("current autocad process", "selected instance", "target identity"),
+    ),
+    "system_select_instance": ToolAliases(
+        synonyms=(
+            "switch autocad process",
+            "select instance",
+            "connect by pid",
+            "parallel projects",
+        ),
+    ),
     "system_preferences_get": ToolAliases(
         acad=("OPTIONS",),
         synonyms=(

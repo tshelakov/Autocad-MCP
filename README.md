@@ -19,11 +19,11 @@ Live through COM on Windows, or headless through ezdxf anywhere — one typed co
 
 </div>
 
-> **v1.8 release snapshot:** 257 tools · 13 resources · 5 prompt templates · 7583 collected tests.
-> 257 is the **registered** count. Since 1.8.0 a default install lists six over `tools/list`
+> **v1.8 release snapshot:** 260 tools · 13 resources · 5 prompt templates · 7616 collected tests.
+> 260 is the **registered** count. Since 1.8.0 a default install lists six over `tools/list`
 > (`DISCOVERY_MODE=search`: `search_tools`, `describe_tool`, `call_tool` and the three
 > `DISCOVERY_PINNED` tools), and every tool the profile and packs allow stays callable by name;
-> `DISCOVERY_MODE=off` lists 253: the 252 a default profile enables (`ENABLE_3D` unset hides the five
+> `DISCOVERY_MODE=off` lists 256: the 255 a default profile enables (`ENABLE_3D` unset hides the five
 > solids) plus `describe_tool`. `system_about` is the runtime authority.
 
 ## What's new in 1.8
@@ -401,6 +401,11 @@ A `.dwt` template is the same case (`dwt_write`): a `.dwt` is a DWG container, s
 </details>
 
 ## Configuration
+
+For parallel projects in separate running AutoCAD processes, use `CAD_TARGET=pid:<PID>`
+or `system_list_instances` → `system_select_instance` → `system_get_instance`.
+Each project needs an independent STDIO connection. See [instance targeting](docs/instance-targeting.md)
+for binding guarantees and the limits of COM discovery. An unset target keeps the existing connection behaviour.
 
 Nothing loads a `.env` file — export these, or set them in your MCP client's `env` block.
 

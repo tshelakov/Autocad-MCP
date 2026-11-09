@@ -396,7 +396,7 @@ async def test_the_deny_set_is_derived_from_the_escape_cost_cards():
         if ((tool.meta or {}).get("cad") or {}).get("cost") == "escape"
     }
     assert escapes, "the registry must still carry escape-cost tools for this to mean anything"
-    assert server._batch_denied_tools() == escapes | {"cad_batch"}
+    assert server._batch_denied_tools() == escapes | {"cad_batch", "system_select_instance"}
 
 
 async def test_the_raw_command_and_lisp_hatches_are_denied():

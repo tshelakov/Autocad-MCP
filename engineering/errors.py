@@ -148,6 +148,13 @@ REVISE_KINDS = ("hand_edited_tagged_entity", "model_drift")
 #: never existed.
 CHECKPOINT_KINDS = ("checkpoint_not_found", "checkpoint_evicted")
 
+INSTANCE_ERROR_KINDS = (
+    "cad_target_not_found",
+    "cad_target_lost",
+    "cad_target_changed",
+    "cad_target_busy",
+)
+
 #: Every kind an error envelope or a step row can carry. Closed: a client that
 #: branches on the taxonomy needs it enumerable. ``requires_reconcile`` is the
 #: operation journal's refusal (B12), already on the wire in 1.7.0;
@@ -159,6 +166,7 @@ CHECKPOINT_KINDS = ("checkpoint_not_found", "checkpoint_evicted")
 ROUTING_KINDS = ("no_route", "routing_budget_exceeded")
 
 ERROR_KINDS = BATCH_KINDS_1_7 + (
+    *INSTANCE_ERROR_KINDS,
     "not_found",
     "unknown_handle",
     "path_refused",
@@ -192,6 +200,18 @@ class KindSpec:
 #: kind -> (category, retryable default, hint). Hints are one short clause:
 #: every error envelope carries one, inside a 60-token budget.
 ERROR_TABLE: dict[str, KindSpec] = {
+    "cad_target_not_found": KindSpec(
+        "dependency", False, "system_list_instances shows reachable PID/HWND targets."
+    ),
+    "cad_target_lost": KindSpec(
+        "dependency", False, "Inspect system_list_instances and explicitly select a new target."
+    ),
+    "cad_target_changed": KindSpec(
+        "dependency", False, "Inspect system_get_instance and send a new request."
+    ),
+    "cad_target_busy": KindSpec(
+        "dependency", True, "Finish queued/running calls and the transaction before switching."
+    ),
     "denied": KindSpec("policy", False, "Call the tool directly; cad_batch never runs it."),
     "malformed_step": KindSpec("input", False, "A step is {tool, args, bind}."),
     "unknown_tool": KindSpec(
@@ -326,6 +346,15 @@ def annotate(error: dict, state: str | None) -> dict:
 
 
 # ── typed exceptions ────────────────────────────────────────────────────────
+
+
+class InstanceTargetError(RuntimeError):
+    """An explicit process cannot be used; no fallback instance is selected."""
+
+    def __init__(self, kind: str, message: str, **details):
+        self.kind = kind
+        self.details = details
+        super().__init__(message)
 
 
 class EntityNotFoundError(RuntimeError):
@@ -836,6 +865,9 @@ def classify(exc: BaseException) -> dict:
     from pydantic import ValidationError as PydanticValidationError
 
     message = short_message(exc)
+    target = _first_of(exc, InstanceTargetError)
+    if target is not None:
+        return {"kind": target.kind, "message": message, **target.details}
     changed = document_changed_of(exc)
     if changed is not None:
         # B11: refused before anything was written; every later step is refused

@@ -296,6 +296,15 @@ class AuditMiddleware(Middleware):
         return result
 
     async def _journalled(self, context: MiddlewareContext, call_next):
+        lifespan = _lifespan_context_or_none(context)
+        backend = lifespan.get("backend") if lifespan is not None else None
+        scope = getattr(backend, "instance_request_scope", None)
+        if scope is None:
+            return await self._journalled_bound(context, call_next)
+        with scope():
+            return await self._journalled_bound(context, call_next)
+
+    async def _journalled_bound(self, context: MiddlewareContext, call_next):
         tool_name = context.message.name
         start = time.monotonic()
         # getattr: a hand-built context (tests/test_cancel_rollbacks.py) has no arguments.
@@ -1897,7 +1906,7 @@ PACK_TOOL_NAMES: dict[str, frozenset[str]] = {
             "pid_project",
         }
     ),
-    # SECTION 20 — the 22 environment tools (spec §7, §8.2).
+    # SECTION 20 — environment tools, including explicit process routing.
     "settings": frozenset(
         {
             "document_list",
@@ -1914,6 +1923,9 @@ PACK_TOOL_NAMES: dict[str, frozenset[str]] = {
             "ucs_set",
             "ucs_restore",
             "system_launch",
+            "system_list_instances",
+            "system_get_instance",
+            "system_select_instance",
             "system_preferences_get",
             "system_preferences_set",
             "drawing_properties_get",
@@ -5252,7 +5264,7 @@ def _batch_denied_tools() -> frozenset[str]:
     ``cad_batch`` denies itself too: no recursion, and no laundering a denied
     step through a nested executor.
     """
-    denied = {"cad_batch"}
+    denied = {"cad_batch", "system_select_instance"}
     for tool in _local_tool_components():
         cad = (getattr(tool, "meta", None) or {}).get("cad") or {}
         if cad.get("cost") == "escape":
@@ -10627,7 +10639,7 @@ async def drawing_template_save(
 
 
 # ---------------------------------------------------------------------------
-# ── SECTION 20: Environment (22 tools) ──────────────────────────────────────
+# ── SECTION 20: Environment (25 tools) ──────────────────────────────────────
 # ---------------------------------------------------------------------------
 
 
@@ -10927,6 +10939,61 @@ async def ucs_restore(
     Refusal: an unknown name (lists the saved ones). Tool coordinates stay
     WCS. Pack: settings · lean: no."""
     return await _backend(ctx).ucs_restore(name)
+
+
+@cad_tool(summary="List reachable AutoCAD instances with PID, HWND and start time.", cost="read")
+@mcp.tool(
+    annotations={"title": "List AutoCAD Instances", "readOnlyHint": True},
+    tags={"environment", "system"},
+)
+async def system_list_instances(ctx: Context = None) -> dict:
+    """Read reachable running COM instances without launching CAD or opening files.
+
+    Returns PID, HWND, started_at_utc, window title, version and available active
+    document metadata. Discovery covers Application and drawing ROT monikers;
+    busy/unregistered instances may be missing (`complete: false`). Live only.
+    """
+    return await _backend(ctx).system_list_instances()
+
+
+@cad_tool(summary="Read this MCP connection's selected AutoCAD process.", cost="read")
+@mcp.tool(
+    annotations={"title": "Get AutoCAD Instance", "readOnlyHint": True},
+    tags={"environment", "system"},
+)
+async def system_get_instance(ctx: Context = None) -> dict:
+    """Read the explicit target/identity/generation, or mode=legacy with no explicit choice.
+
+    A lost/replaced process is cad_target_lost; no replacement is selected.
+    """
+    return await _backend(ctx).system_get_instance()
+
+
+@cad_tool(summary="Pin this MCP connection to one running AutoCAD PID or HWND.", cost="safe")
+@mcp.tool(
+    annotations={
+        "title": "Select AutoCAD Instance",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+    },
+    tags={"environment", "system"},
+)
+async def system_select_instance(
+    target: Annotated[str, "Explicit pid:1234 or hwnd:0x1234 from system_list_instances"],
+    expected_started_at_utc: Annotated[
+        str | None, "Copy started_at_utc from discovery to refuse a recycled PID"
+    ] = None,
+    ctx: Context = None,
+) -> dict:
+    """Select one reachable instance for this MCP backend, without activating/saving/closing DWGs.
+
+    Failed selection preserves the previous binding. Pending/running COM jobs
+    or an active transaction refuse the switch. Not callable inside cad_batch.
+    Later calls validate PID, HWND and start time; process loss never falls back.
+    Each parallel project should have its own STDIO server connection and target.
+    With CAD_TARGET unset the original automatic connection remains unchanged.
+    """
+    return await _backend(ctx).system_select_instance(target, expected_started_at_utc)
 
 
 @cad_tool(

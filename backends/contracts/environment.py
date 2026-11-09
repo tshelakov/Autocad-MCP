@@ -18,6 +18,23 @@ from backends.capability import capability
 
 
 class EnvironmentContract(ABC):
+    @capability("instance_targeting", reason="selecting a process needs live AutoCAD")  # noqa: B027
+    async def system_list_instances(self) -> dict:
+        """List reachable running COM instances; never launch or open a drawing."""
+        ...
+
+    @capability("instance_targeting", reason="selecting a process needs live AutoCAD")  # noqa: B027
+    async def system_get_instance(self) -> dict:
+        """Read this backend's explicit binding and generation."""
+        ...
+
+    @capability("instance_targeting", reason="selecting a process needs live AutoCAD")  # noqa: B027
+    async def system_select_instance(
+        self, target: str, expected_started_at_utc: str | None = None
+    ) -> dict:
+        """Select one pid:/hwnd: target; refuse busy jobs and an active transaction."""
+        ...
+
     # ── documents ────────────────────────────────────────────────────────────
 
     @abstractmethod

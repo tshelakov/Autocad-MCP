@@ -145,6 +145,8 @@ def seat(monkeypatch):
 def com(seat):
     backend = cb.ComBackend()
     backend._executor = DaemonExecutor(max_workers=1, name="test-sta")  # no CoInitialize
+    # The Application cache is STA-local; install the fake on its worker too.
+    backend._executor.submit(lambda: cb._COM_STATE.__setitem__("app", seat)).result()
     backend._connected = True
     yield backend
     if backend._executor is not None:

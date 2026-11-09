@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Live AutoCAD process selection through `CAD_TARGET=pid:<PID>` / `hwnd:<HWND>`
+  and `system_list_instances`, `system_get_instance`, `system_select_instance`.
+  Explicit targets retain PID, HWND and process start time, never launch or
+  select another process on loss, and reject switches while work/transactions
+  are active. Selection is refused inside `cad_batch`.
+- STA-local COM proxy caches and whole-request binding generations for
+  independent backend connections. ROT discovery can use existing drawing
+  registrations to reach a non-default instance; inaccessible registrations
+  are reported as a discovery limitation. A read-only two-process smoke and
+  mocked routing/isolation regressions cover the new mechanism.
+
 ## [1.8.0] - 2026-11-06
 
 1.8.0: the server remembers, finishes a job in one call and measures itself
