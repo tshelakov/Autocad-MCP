@@ -34,6 +34,12 @@ Client configuration, trust paths, `SECURELOAD` and other AutoCAD settings are
 not changed. A failed bridge setup retains the old bridge and reports that the
 Python package was installed separately.
 
+Preview works before installing any server dependencies. Setup holds an
+operating-system file lock, released automatically if the installer exits or
+crashes. The small `.autocad-mcp-instance-setup.lock` file stays in the plugin
+root; its presence alone does not mean another installer is running. Do not
+delete it while setup is running.
+
 For a server already installed from this fork, setup is available without the
 repository's PowerShell installer:
 

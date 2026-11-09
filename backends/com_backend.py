@@ -449,6 +449,7 @@ def _acad_app():
             backend._check_target_generation(guard.generation)
             if backend._instance_selector is not None:
                 return backend._target_app_sync()
+            _COM_STATE.pop("prepared_target", None)
     if "app" not in _COM_STATE:
         progid = config.settings.cad_progid
         try:
@@ -560,6 +561,7 @@ def _make_launched_visible(app, progid: str) -> None:
 
 def _drop_app() -> None:
     """Forget the cached Application proxy (and the identity read from it)."""
+    _COM_STATE.pop("prepared_target", None)
     _COM_STATE.pop("target_app", None)
     _COM_STATE.pop("app", None)
     _COM_STATE.pop("app_identity", None)
@@ -3298,6 +3300,7 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
         self._instance_generation = 0
         self._instance_pending_jobs = 0
         self._instance_pending_requests = 0
+        self._instance_selecting: asyncio.Task | None = None
         # B01: cancellations recorded by `_run`, newest last; Task 10 reads it.
         self.call_outcomes: collections.deque = collections.deque(maxlen=self._MAX_CALL_OUTCOMES)
         # 1.8-14: every job's queue/guard/work/refresh/counter ms (run_metrics).
@@ -4049,6 +4052,12 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
         if identity is not None:
             validate_identity(identity)
         key = (id(self), self._instance_generation)
+        prepared = _COM_STATE.pop("prepared_target", None)
+        if prepared is not None and prepared[0] == key and prepared[1] == identity:
+            app = prepared[2]
+            _drop_app()
+            _COM_STATE["target_app"] = (key, app)
+            return app
         cached = _COM_STATE.get("target_app")
         if cached is not None and cached[0] == key:
             return cached[1]
@@ -4100,7 +4109,8 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
         if selector is None:
             raise ValueError("system_select_instance requires an explicit pid:/hwnd: target.")
         if (
-            self._instance_pending_jobs
+            self._instance_selecting is not None
+            or self._instance_pending_jobs
             or self._transaction_active
             or self._instance_pending_requests > 1
         ):
@@ -4110,7 +4120,13 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
                 "AutoCAD instance. Nothing was switched.",
             )
 
-        def _sync():
+        # Only this task may submit jobs until the prepared result is committed.
+        # In particular, the worker can finish before the event loop resumes us;
+        # a second caller must not enter that gap with the old binding.
+        self._instance_selecting = asyncio.current_task()
+        generation = self._instance_generation + 1
+
+        def _prepare():
             if self._transaction_active:
                 raise InstanceTargetError(
                     "cad_target_busy", "An AutoCAD transaction is active; finish it first."
@@ -4121,14 +4137,29 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
             # Verify the chosen proxy before replacing a working connection.
             validate_identity(candidate.identity)
             _ = candidate.app.Version
+            # Cache only on the owning STA, under a generation that is not live
+            # yet. An abandoned worker can populate this cache, but cannot change
+            # routing. Old-generation jobs ignore it and keep their existing app.
+            _COM_STATE["prepared_target"] = (
+                (id(self), generation),
+                candidate.identity,
+                candidate.app,
+            )
+            return candidate.identity, candidate.active_document
+
+        try:
+            identity, active_document = await self._run(_prepare)
+            # No awaits or COM calls below: commit plain state on the event loop
+            # only after the await succeeded. Timeout/cancellation leaves the
+            # old binding intact, even if the abandoned STA later finishes.
+            self._check_target_generation(generation - 1)
+            if self._executor is None:
+                raise RuntimeError("ComBackend disconnected during instance selection.")
             previous = self._instance_identity
-            changed = previous != candidate.identity
-            _drop_app()
+            changed = previous != identity
             self._instance_selector = selector
-            self._instance_identity = candidate.identity
-            self._instance_generation += 1
-            key = (id(self), self._instance_generation)
-            _COM_STATE["target_app"] = (key, candidate.app)
+            self._instance_identity = identity
+            self._instance_generation = generation
             if changed:
                 self._bound = None
                 self._document_scope_key = None
@@ -4142,14 +4173,14 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
             return {
                 "ok": True,
                 "target": selector.text,
-                "identity": candidate.identity.to_dict(),
+                "identity": identity.to_dict(),
                 "previous": None if previous is None else previous.to_dict(),
-                "active_document": candidate.active_document,
+                "active_document": active_document,
                 "generation": self._instance_generation,
                 "changed": changed,
             }
-
-        return await self._run(_sync)
+        finally:
+            self._instance_selecting = None
 
     async def _run(self, func, *args, **kwargs):
         """Run a callable in the COM executor thread, with a hard timeout.
@@ -4183,6 +4214,14 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
         """
         if self._executor is None:
             raise RuntimeError("ComBackend not connected. Call connect() first.")
+        if (
+            self._instance_selecting is not None
+            and self._instance_selecting is not asyncio.current_task()
+        ):
+            raise InstanceTargetError(
+                "cad_target_busy",
+                "An AutoCAD instance selection is in progress; retry after it ends.",
+            )
         loop = asyncio.get_running_loop()
         timeout = config.settings.com_call_timeout
         started = time.time()

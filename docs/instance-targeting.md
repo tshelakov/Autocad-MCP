@@ -26,6 +26,11 @@ request, or an active transaction refuses a switch with `cad_target_busy`.
 `system_select_instance` is refused during whole-batch preflight; one batch
 cannot route its later steps into another project.
 
+Cancellation or timeout during selection leaves the previous binding intact,
+even if the COM worker finishes later. While a selection is being prepared and
+committed, concurrent jobs are refused with `cad_target_busy`; retry them after
+the selection ends. COM proxies stay on their owning STA throughout.
+
 ## Separate connections for parallel projects
 
 Each project should have its own STDIO server process. Set its environment to:
@@ -40,6 +45,9 @@ CAD_LAUNCH=never
 Use another `CAD_TARGET` for the other project. Existing timeout, tool-profile,
 path, discovery and security settings are independent of process selection.
 An explicit target never falls back to `Dispatch`, including `system_launch`.
+Invalid `CAD_TARGET` values fail backend initialization. A non-empty target also
+refuses headless mode or a COM initialization failure instead of falling back
+to ezdxf, even when `AUTOCAD_MCP_BACKEND=auto`.
 
 The backend's Application, Visual LISP and export-related COM proxy caches are
 STA-local. A timeout worker's later teardown cannot release another worker's

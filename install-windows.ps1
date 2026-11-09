@@ -12,7 +12,7 @@ $setupArgs = @('--install-instance-bridge')
 foreach ($item in $AutoCADDirectory) { $setupArgs += @('--autocad-directory', $item) }
 if ($Preview) {
     if ($SkipInstanceBridge) { Write-Output 'Would install the MCP package; instance bridge skipped.'; exit 0 }
-    & $PythonExecutable (Join-Path $PSScriptRoot 'server.py') @setupArgs --dry-run
+    & $PythonExecutable (Join-Path $PSScriptRoot 'backends/instance_setup.py') @setupArgs --dry-run
     if ($LASTEXITCODE -ne 0) { throw 'Instance bridge preview failed; no package was installed.' }
     Write-Output "Would install MCP with $PythonExecutable from $PackageSource"
     exit 0

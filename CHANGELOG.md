@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A cancelled or timed-out instance selection cannot change the binding when
+  its abandoned COM worker finishes. Selection prepares proxies on their STA
+  and commits routing only after the caller successfully receives the result;
+  concurrent jobs are refused until that commit. The legacy connection is
+  preserved too. Explicit `CAD_TARGET` configuration errors and COM startup
+  failures no longer fall back to a headless backend.
+- Instance bridge setup uses an OS-held lock that is released on process exit,
+  including a crash. A leftover lock file no longer blocks installation, and
+  `install-windows.ps1 -Preview` works in a clean Python environment before
+  server dependencies are installed.
+
 - `document_list` now includes the selected application's identity when looking
   up a known document's ID/revision. A live two-process write smoke on AutoCAD
   2023 exposed the missing key; the regression is covered without live CAD.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 BUNDLE_NAME = "AutoCAD.MCP.InstanceBridge.bundle"
@@ -328,17 +330,41 @@ def install_bridge(
 
 @contextlib.contextmanager
 def _setup_lock(path: Path):
+    """An OS-held lock: a crashed installer releases it without stale-file repair.
+
+    Keep the file in place even after unlocking. Unlinking would let two callers
+    lock different files at the same path. Existing files from the older
+    existence-based lock do not prevent a new installer from acquiring this lock.
+    """
+    _plain_tree(path, contents=False)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError as exc:
-        raise ValueError(
-            "Another instance bridge setup is active; retry after it finishes."
-        ) from exc
-    try:
-        os.close(descriptor)
-        yield
+        if sys.platform == "win32":
+            import msvcrt
+
+            lock = partial(msvcrt.locking, descriptor, msvcrt.LK_NBLCK, 1)
+            unlock = partial(msvcrt.locking, descriptor, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            lock = partial(fcntl.flock, descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            unlock = partial(fcntl.flock, descriptor, fcntl.LOCK_UN)
+        try:
+            lock()
+        except OSError as exc:
+            # Only contention is a busy installer; permission/I/O errors retain
+            # their real cause instead of asking the user to wait indefinitely.
+            if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise
+            raise ValueError(
+                "Another instance bridge setup is active; retry after it finishes."
+            ) from exc
+        try:
+            yield
+        finally:
+            unlock()
     finally:
-        path.unlink()
+        os.close(descriptor)
 
 
 def uninstall_bridge(plugins_root: Path, *, dry_run: bool = False) -> dict:
@@ -390,3 +416,9 @@ def setup_main(arguments: list[str]) -> int:
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"Instance bridge setup failed: {exc}", file=sys.stderr)
         return 1
+
+
+if __name__ == "__main__":
+    # Executable by file path in a clean venv: do not import backends/__init__.py
+    # (it imports the server's third-party dependencies).
+    raise SystemExit(setup_main(sys.argv[1:]))

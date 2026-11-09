@@ -137,6 +137,13 @@ async def _make_backend():
     # could reach a live AutoCAD instead. The property reads the environment
     # live, so nothing about startup ordering changes.
     backend_env = config.settings.backend
+    # An explicit process is a requirement, not a hint to the automatic engine
+    # chooser. Validate outside its COM failure handler, including on non-Windows.
+    target = config.settings.cad_target
+    if target and backend_env not in ("auto", "com"):
+        raise ValueError("CAD_TARGET requires AUTOCAD_MCP_BACKEND=auto or com, not headless mode.")
+    if target and not _WIN32:
+        raise RuntimeError("CAD_TARGET requires the live COM backend on Windows.")
 
     if backend_env == "ezdxf":
         from backends.ezdxf_backend import EzdxfBackend
@@ -156,7 +163,7 @@ async def _make_backend():
                 return b
             except Exception as exc:
                 log.warning("COM backend init failed (%s)", exc)
-                if backend_env == "com":
+                if backend_env == "com" or target:
                     raise RuntimeError(f"COM backend requested but failed: {exc}") from exc
         else:
             log.warning("COM backend requires Windows; falling back to ezdxf")

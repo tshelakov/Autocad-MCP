@@ -99,3 +99,44 @@ async def test_make_backend_reads_the_setting_not_the_environment_directly(monke
     backend = await server._make_backend()
     assert isinstance(backend, EzdxfBackend)
     await backend.disconnect()
+
+
+@pytest.mark.parametrize("mode", ["auto", "com", "ezdxf"])
+async def test_invalid_target_fails_before_constructing_any_backend(
+    monkeypatch, com_sentinel, mode
+):
+    monkeypatch.setenv("AUTOCAD_MCP_BACKEND", mode)
+    monkeypatch.setenv("CAD_TARGET", "pid:typo")
+    with pytest.raises(ValueError, match="CAD_TARGET"):
+        await server._make_backend()
+    assert com_sentinel.constructed == []
+
+
+async def test_explicit_target_never_falls_back_after_com_failure(monkeypatch, com_sentinel):
+    monkeypatch.setenv("AUTOCAD_MCP_BACKEND", "auto")
+    monkeypatch.setenv("CAD_TARGET", "pid:42")
+    monkeypatch.setattr(server, "_WIN32", True)
+    with pytest.raises(RuntimeError, match="COM backend requested but failed"):
+        await server._make_backend()
+    assert len(com_sentinel.constructed) == 1
+
+
+@pytest.mark.parametrize("mode,windows", [("auto", False), ("com", False), ("ezdxf", True)])
+async def test_target_is_refused_when_live_backend_is_unavailable(
+    monkeypatch, com_sentinel, mode, windows
+):
+    monkeypatch.setenv("AUTOCAD_MCP_BACKEND", mode)
+    monkeypatch.setenv("CAD_TARGET", "pid:42")
+    monkeypatch.setattr(server, "_WIN32", windows)
+    with pytest.raises((RuntimeError, ValueError), match="CAD_TARGET"):
+        await server._make_backend()
+    assert com_sentinel.constructed == []
+
+
+async def test_auto_without_target_still_falls_back_after_com_failure(monkeypatch, com_sentinel):
+    monkeypatch.delenv("CAD_TARGET", raising=False)
+    monkeypatch.setenv("AUTOCAD_MCP_BACKEND", "auto")
+    monkeypatch.setattr(server, "_WIN32", True)
+    backend = await server._make_backend()
+    assert backend.name == "ezdxf"
+    await backend.disconnect()

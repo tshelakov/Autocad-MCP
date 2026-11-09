@@ -72,3 +72,49 @@ C# source. Repeated bridge setup returned `unchanged`, the installed-file hashes
 were verified, and the MCP client's configuration hash stayed unchanged.
 This confirms automatic startup loading on this AutoCAD 2023 installation;
 other versions and environments with stricter DLL trust policies were not run.
+
+## Review fixes and regression verification (2026-11-09)
+
+The follow-up review fixes cancellation/timeout during selection, explicit
+target initialization falling back to headless, setup locks surviving crashes,
+and preview requiring dependencies that have not been installed yet.
+
+Selection now prepares a proxy on its STA and commits only plain routing state
+on the event loop after the await succeeds. A pending selection excludes other
+jobs through the prepare/commit gap. Cancellation keeps both explicit and legacy
+connections intact, and a disconnect invalidates the prepared result. The
+regressions include a slow worker finishing after cancellation or timeout and
+another call arriving after preparation but before commit.
+
+Verification on Windows / Python 3.14:
+
+- All 75 tests in the instance-targeting, installer and backend-selection files
+  passed, including 18 newly added parametrized cases.
+- The full 7,655-test suite completed with 7,649 passed, two skipped, one expected
+  failure and three failures caused by putting pytest's temporary folder inside
+  the repository. Those three belong to the field-takeoff tests, which correctly
+  refuse report output inside the repository. All four tests in that file passed
+  with a temporary folder outside the repository. No remaining unexpected test
+  failure was observed; the aggregate is 7,652 passed, two skipped, one expected
+  failure. These are results of the full run plus that targeted rerun, not a
+  claim that the first full invocation was green.
+- A separate-process lock test refused concurrent access and allowed access
+  after both normal exit and forced exit without cleanup. An old empty lock file
+  no longer blocks installation.
+- The PowerShell preview passed in a clean venv without pip/server dependencies.
+  The packaged standalone setup also ran with the real installed AutoCAD 2023
+  references in dry-run mode and reported the existing bundle unchanged.
+- The wheel and sdist built successfully and passed the distribution-content
+  checker. Imports, source inclusion and mocked switching passed from a wheel
+  installed into a separate test folder. Ruff, tool inventory, plugin copy and
+  documentation-number checks passed.
+- `smoke_instances_com.py` passed again on the two running AutoCAD 2023 instances:
+  separate startup bindings, discovery, refusal preserving the old binding,
+  five concurrent status rounds, switching one server and switching it back.
+  The other server retained its target and the active document names matched
+  their initial values. This smoke creates no documents or geometry.
+
+The installed MCP environment was not upgraded by these checks. Cancellation
+and crash cases use controlled mocks/child processes; neither user AutoCAD
+process was terminated. The live write smoke and plugin startup loading were
+not repeated in this review round.

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
+import venv
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -61,7 +64,7 @@ def test_repeat_install_is_idempotent_and_does_not_compile_again(install, plugin
     result = setup.install_bridge([install], plugins, builder=never)
     assert result["status"] == "unchanged"
     assert (bundle / setup.MANIFEST).read_bytes() == before
-    assert len(list(plugins.iterdir())) == 1
+    assert set(plugins.iterdir()) == {bundle, plugins / ".autocad-mcp-instance-setup.lock"}
 
 
 def test_update_retains_recoverable_previous_bundle(install, plugins, tmp_path):
@@ -91,7 +94,7 @@ def test_compile_failure_preserves_old_bundle_and_cleans_staging(install, plugin
     with pytest.raises(RuntimeError, match="compiler failed"):
         setup.install_bridge([install], plugins, source=source, builder=failure)
     assert (bundle / setup.MANIFEST).read_bytes() == before
-    assert list(plugins.iterdir()) == [bundle]
+    assert set(plugins.iterdir()) == {bundle, plugins / ".autocad-mcp-instance-setup.lock"}
 
 
 def test_failed_final_rename_rolls_back(install, plugins, tmp_path, monkeypatch):
@@ -111,7 +114,7 @@ def test_failed_final_rename_rolls_back(install, plugins, tmp_path, monkeypatch)
     with pytest.raises(PermissionError, match="locked"):
         setup.install_bridge([install], plugins, source=source, builder=builder)
     assert (bundle / setup.MANIFEST).read_bytes() == before
-    assert list(plugins.iterdir()) == [bundle]
+    assert set(plugins.iterdir()) == {bundle, plugins / ".autocad-mcp-instance-setup.lock"}
 
 
 def test_preview_writes_nothing(install, plugins):
@@ -199,10 +202,109 @@ def test_existing_setup_lock_refuses_without_touching_bundle(install, plugins):
     plugins.mkdir()
     lock = plugins / ".autocad-mcp-instance-setup.lock"
     lock.write_text("another setup")
-    with pytest.raises(ValueError, match="Another instance bridge setup"):
-        installed(install, plugins)
+    with setup._setup_lock(lock):
+        with pytest.raises(ValueError, match="Another instance bridge setup"):
+            installed(install, plugins)
     assert lock.read_text() == "another setup"
     assert not (plugins / setup.BUNDLE_NAME).exists()
+
+
+def test_stale_lock_file_does_not_block_installation(install, plugins):
+    plugins.mkdir()
+    (plugins / ".autocad-mcp-instance-setup.lock").touch()
+    assert installed(install, plugins)["status"] == "installed"
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_setup_lock_excludes_other_process_and_recovers_after_exit(tmp_path, crash):
+    lock = tmp_path / "setup.lock"
+    script = "\n".join(
+        [
+            "import os, runpy, sys",
+            "from pathlib import Path",
+            f"setup = runpy.run_path({str(setup.__file__)!r})",
+            f"with setup['_setup_lock'](Path({str(lock)!r})):",
+            " print('locked', flush=True)",
+            " sys.stdin.readline()",
+            f" if {crash!r}: os._exit(19)",
+        ]
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-S", "-c", script],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        assert child.stdout.readline().strip() == "locked"
+        with pytest.raises(ValueError, match="Another instance bridge setup"):
+            with setup._setup_lock(lock):
+                pytest.fail("another process acquired the held lock")
+        child.communicate("done\n", timeout=10)
+        assert child.returncode == (19 if crash else 0)
+        with setup._setup_lock(lock):
+            pass
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=10)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows installer preview")
+def test_preview_entrypoint_needs_only_the_standard_library(install, tmp_path):
+    roaming = tmp_path / "roaming"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(setup.__file__),
+            "--install-instance-bridge",
+            "--dry-run",
+            "--autocad-directory",
+            f"2023={install.directory}",
+        ],
+        env={**os.environ, "APPDATA": str(roaming)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "would_install"
+    assert not roaming.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell Windows installer")
+def test_powershell_preview_works_in_a_clean_venv(install, tmp_path):
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if shell is None:
+        pytest.skip("PowerShell is unavailable")
+    clean = tmp_path / "clean venv"
+    venv.EnvBuilder(with_pip=False).create(clean)
+    roaming = tmp_path / "roaming"
+    result = subprocess.run(
+        [
+            shell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(Path(setup.__file__).resolve().parents[1] / "install-windows.ps1"),
+            "-PythonExecutable",
+            str(clean / "Scripts/python.exe"),
+            "-Preview",
+            "-AutoCADDirectory",
+            f"2023={install.directory}",
+        ],
+        env={**os.environ, "APPDATA": str(roaming)},
+        capture_output=True,
+        timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert b'"status": "would_install"' in result.stdout
+    assert not roaming.exists()
 
 
 def test_cli_setup_does_not_start_server(install, plugins, monkeypatch):
