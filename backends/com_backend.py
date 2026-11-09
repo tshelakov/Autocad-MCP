@@ -5228,7 +5228,7 @@ class ComBackend(ComCheckpoints, AutoCADBackend):
             return [
                 {
                     **self._com_document_row(doc, active),
-                    **self._identity_of_key((str(doc.Name), str(doc.FullName))),
+                    **self._identity_of_key((str(doc.Name), str(doc.FullName)), _app_identity(app)),
                 }
                 for doc in self._com_documents(app)
             ]

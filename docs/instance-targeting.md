@@ -83,3 +83,12 @@ It starts two independent STDIO servers, verifies startup targets, discovers
 both processes, refuses a missing PID, reads their statuses concurrently,
 switches one server and switches it back. It does not modify any DWG. A live
 pass applies only to the instances and AutoCAD versions recorded in its output.
+
+`scripts/smoke_instance_writes_com.py` additionally opens one newly generated
+scratch DXF per process, creates and edits different geometry concurrently,
+reads it back, switches handle lookup between processes and checks transaction
+refusal. It closes only its scratch documents unsaved and restores the original
+active drawings. Cleanup compares original document names, saved flags, entity
+counts and file SHA-256 values; this does not claim a full in-memory database
+comparison. Both smokes were exercised on two AutoCAD 2023 processes; one needed
+the optional ROT publisher. See [live evidence](instance-targeting-live.md).

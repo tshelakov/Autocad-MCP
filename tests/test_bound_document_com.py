@@ -170,6 +170,17 @@ async def test_the_first_call_binds_the_active_document(com, seat):
 
 
 @pytest.mark.asyncio
+async def test_document_list_uses_the_selected_application_identity(com, seat):
+    await com.system_get_variable("LTSCALE")
+    identity = com.document_identity()
+    rows = await com.document_list()
+    active = next(row for row in rows if row["active"])
+    assert active["document_id"] == identity["document_id"]
+    assert active["revision"] == identity["revision"]
+    assert next(row for row in rows if not row["active"])["document_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_a_switch_between_two_calls_is_refused_and_writes_nothing(com, seat):
     """Review Focus 4: the operator switches AutoCAD's active document between two calls."""
     await com.system_set_variable("LTSCALE", 2.0)

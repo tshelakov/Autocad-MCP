@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are reported as a discovery limitation. A read-only two-process smoke and
   mocked routing/isolation regressions cover the new mechanism.
 
+### Fixed
+
+- `document_list` now includes the selected application's identity when looking
+  up a known document's ID/revision. A live two-process write smoke on AutoCAD
+  2023 exposed the missing key; the regression is covered without live CAD.
+
 ## [1.8.0] - 2026-11-06
 
 1.8.0: the server remembers, finishes a job in one call and measures itself
