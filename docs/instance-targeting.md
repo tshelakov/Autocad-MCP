@@ -65,9 +65,11 @@ COM accessibility limitation, not evidence that no other AutoCAD process exists.
 
 For an instance that does not publish its own COM object, the optional
 [in-process publisher](../integrations/autocad-rot-bridge/README.md) registers
-the existing Application under a unique PID moniker. Loading it is an explicit
-AutoCAD-side step; the MCP server does not install or load plugins. Discovery
-accepts that moniker only after checking the actual Application HWND/PID.
+the existing Application under a unique PID moniker. `install-windows.ps1`
+configures its autoload by default, or run `autocad-mcp --install-instance-bridge`
+for an already-installed fork. Each new AutoCAD process loads its own publisher.
+The regular server startup never installs plugins. Discovery accepts the moniker
+only after checking the actual Application HWND/PID.
 
 ## Verification
 

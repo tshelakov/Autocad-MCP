@@ -1,4 +1,4 @@
-// Optional, in-process COM discovery publisher. No drawing/database access.
+// In-process COM discovery publisher. No drawing/database access.
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -15,6 +15,7 @@ namespace AutoCadMcp
     {
         private static IRunningObjectTable table;
         private static int? registration;
+        private static int attempts;
 
         [DllImport("ole32.dll", PreserveSig = false)]
         private static extern void GetRunningObjectTable(int reserved, out IRunningObjectTable value);
@@ -24,17 +25,25 @@ namespace AutoCadMcp
 
         public void Initialize()
         {
-            // AcadApplication may not be ready during application startup.
+            attempts = 0;
             AcApplication.Idle += PublishWhenIdle;
         }
 
         private static void PublishWhenIdle(object sender, EventArgs args)
         {
-            AcApplication.Idle -= PublishWhenIdle;
-            try { Publish(); }
-            catch (System.Exception)
+            try
             {
-                // No modal UI or drawing mutation. MCPREGISTERINSTANCE retries explicitly.
+                Publish();
+                AcApplication.Idle -= PublishWhenIdle;
+            }
+            catch (System.Exception error)
+            {
+                // Startup may not expose AcadApplication yet. Bounded, on the main thread.
+                if (++attempts >= 10)
+                {
+                    AcApplication.Idle -= PublishWhenIdle;
+                    Trace.WriteLine("AutoCAD MCP instance publisher: " + error.Message);
+                }
             }
         }
 
@@ -42,36 +51,42 @@ namespace AutoCadMcp
         public static void Publish()
         {
             if (registration.HasValue) return;
-            GetRunningObjectTable(0, out table);
-            IMoniker moniker;
-            CreateItemMoniker("!", "autocad-mcp:pid:" + Process.GetCurrentProcess().Id, out moniker);
+            IRunningObjectTable nextTable;
+            GetRunningObjectTable(0, out nextTable);
+            IMoniker moniker = null;
             try
             {
-                // Register the existing COM object, never a managed wrapper with a new API.
-                // RegistrationKeepsAlive=1, no AllowAnyClient: standard user/elevation scope.
-                registration = table.Register(1, AcApplication.AcadApplication, moniker);
+                CreateItemMoniker("!", "autocad-mcp:pid:" + Process.GetCurrentProcess().Id, out moniker);
+                // Existing COM object, not a managed wrapper. No AllowAnyClient flag.
+                registration = nextTable.Register(1, AcApplication.AcadApplication, moniker);
+                table = nextTable;
+                nextTable = null;
             }
-            finally { Marshal.ReleaseComObject(moniker); }
+            finally
+            {
+                if (moniker != null) Marshal.ReleaseComObject(moniker);
+                if (nextTable != null) Marshal.ReleaseComObject(nextTable);
+            }
         }
 
         [CommandMethod("MCPUNREGISTERINSTANCE", CommandFlags.Session)]
         public static void Unpublish()
         {
-            if (registration.HasValue)
+            AcApplication.Idle -= PublishWhenIdle;
+            try
             {
-                table.Revoke(registration.Value);
-                registration = null;
+                if (registration.HasValue) table.Revoke(registration.Value);
             }
-            if (table != null)
+            finally
             {
-                Marshal.ReleaseComObject(table);
+                registration = null;
+                if (table != null) Marshal.ReleaseComObject(table);
                 table = null;
             }
         }
 
         public void Terminate()
         {
-            AcApplication.Idle -= PublishWhenIdle;
             Unpublish();
         }
     }

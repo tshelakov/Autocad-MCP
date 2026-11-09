@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `install-windows.ps1` installs the MCP and configures a current-user AutoCAD
+  instance bridge bundle with startup loading by default. Explicit
+  `autocad-mcp --install-instance-bridge` / `--uninstall-instance-bridge` commands
+  support an already-installed fork, with preview, unchanged-install detection,
+  ownership/hash checks and recoverable updates. The wheel carries the C# source
+  and compiles against the selected installed AutoCAD 2022–2024 reference DLLs.
+  Client configuration and AutoCAD trust/security settings are preserved.
+
 - Live AutoCAD process selection through `CAD_TARGET=pid:<PID>` / `hwnd:<HWND>`
   and `system_list_instances`, `system_get_instance`, `system_select_instance`.
   Explicit targets retain PID, HWND and process start time, never launch or

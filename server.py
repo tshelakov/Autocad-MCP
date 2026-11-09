@@ -15398,7 +15398,21 @@ mcp.http_app = _guarded_http_app
 
 def main() -> None:
     """Run the MCP server from the installed ``autocad-mcp`` command."""
-    parser = argparse.ArgumentParser(description="Run the AutoCAD MCP server")
+    if any(
+        flag in sys.argv[1:]
+        for flag in (
+            "--install-instance-bridge",
+            "--uninstall-instance-bridge",
+        )
+    ):
+        from backends.instance_setup import setup_main
+
+        raise SystemExit(setup_main(sys.argv[1:]))
+    parser = argparse.ArgumentParser(
+        description="Run the AutoCAD MCP server",
+        epilog="Windows setup: --install-instance-bridge [--dry-run] "
+        "[--autocad-directory YEAR=PATH]; --uninstall-instance-bridge [--dry-run].",
+    )
     parser.add_argument("--transport", default="stdio")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)

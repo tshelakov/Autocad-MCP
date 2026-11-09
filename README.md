@@ -19,7 +19,7 @@ Live through COM on Windows, or headless through ezdxf anywhere — one typed co
 
 </div>
 
-> **v1.8 release snapshot:** 260 tools · 13 resources · 5 prompt templates · 7618 collected tests.
+> **v1.8 release snapshot:** 260 tools · 13 resources · 5 prompt templates · 7637 collected tests.
 > 260 is the **registered** count. Since 1.8.0 a default install lists six over `tools/list`
 > (`DISCOVERY_MODE=search`: `search_tools`, `describe_tool`, `call_tool` and the three
 > `DISCOVERY_PINNED` tools), and every tool the profile and packs allow stays callable by name;
@@ -124,6 +124,19 @@ Earlier releases, 1.7 and 1.6 included, are in the [changelog](https://github.co
 </details>
 
 ## Install
+
+On Windows, install this checkout into the Python environment used by your MCP
+client and configure the instance bridge's AutoCAD startup loading together:
+
+```powershell
+.\install-windows.ps1 -PythonExecutable 'C:\path\to\venv\Scripts\python.exe'
+```
+
+The installer preserves client settings and sets up a current-user AutoCAD
+bundle for installed AutoCAD 2022–2024. `-Preview` writes nothing;
+`-SkipInstanceBridge` skips plugin setup. An already-installed fork also provides
+`autocad-mcp --install-instance-bridge`. See [autoload setup](integrations/autocad-rot-bridge/README.md).
+Direct pip installs leave plugin setup to that explicit command.
 
 ```bash
 pip install autocad-mcp-pro     # or: uvx autocad-mcp-pro

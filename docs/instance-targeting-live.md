@@ -52,3 +52,23 @@ AutoCAD 2025+ needs a matching runtime build.
 
 Raw local logs retain machine-specific drawing names and paths and are excluded
 from Git. The published evidence summary contains no customer drawing content.
+
+## Startup loading verification
+
+The explicit installer built and deployed the publisher into the current user's
+AutoCAD `.bundle` folder. `PackageContents.xml` selects R24.2 only, sets
+`LoadOnAutoCADStartup=True` and `LoadOnAppearance=False`. Existing processes
+therefore retain their currently loaded assembly until their next start.
+
+A separate AutoCAD 2023 process was launched with a blank local template. It
+published `!autocad-mcp:pid:<its PID>` automatically; no `NETLOAD` or manual load
+was used. A server from the built Python wheel connected to that process by PID
+and read its status. The blank document and test process were then closed. The
+two original AutoCAD processes were left running.
+
+The complete `install-windows.ps1` flow was exercised in an independent Python
+environment with a locally built wheel. The wheel carried both setup code and
+C# source. Repeated bridge setup returned `unchanged`, the installed-file hashes
+were verified, and the MCP client's configuration hash stayed unchanged.
+This confirms automatic startup loading on this AutoCAD 2023 installation;
+other versions and environments with stricter DLL trust policies were not run.
